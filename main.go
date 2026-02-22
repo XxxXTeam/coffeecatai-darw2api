@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -32,7 +33,7 @@ const (
 )
 
 const (
-	coffeeBaseURL     = "https://coffeecatai.openel.top"
+	coffeeBaseURL     = "https://www.coffeecatai.com"
 	coffeeGenURLFmt   = coffeeBaseURL + "/api/image/generation/%s"
 	coffeePollURL     = coffeeBaseURL + "/api/image/generation"
 	coffeePromptURL   = coffeeBaseURL + "/api/image/prompt/free"
@@ -40,9 +41,63 @@ const (
 	coffeeDescribeURL = coffeeBaseURL + "/api/image/describe/free"
 	turnstileSiteKey  = "0x4AAAAAACJLXZu8e5k56IR-"
 	turnstileSiteURL  = "https://www.coffeecatai.com"
-	userAgent         = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0"
 	captchaTokenTTL   = 250 * time.Second
 )
+
+func randomIP() string {
+	for {
+		a := rand.IntN(223) + 1
+		b := rand.IntN(256)
+		c := rand.IntN(256)
+		d := rand.IntN(256)
+		if a == 10 || a == 127 || (a == 172 && b >= 16 && b <= 31) || (a == 192 && b == 168) {
+			continue
+		}
+		return fmt.Sprintf("%d.%d.%d.%d", a, b, c, d)
+	}
+}
+
+var userAgents = []string{
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0",
+	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:134.0) Gecko/20100101 Firefox/134.0",
+}
+
+var secChUaVariants = []struct {
+	UA       string
+	ChUa     string
+	Mobile   string
+	Platform string
+}{
+	{ChUa: `"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"`, Mobile: "?0", Platform: `"Windows"`},
+	{ChUa: `"Chromium";v="132", "Not_A Brand";v="24", "Google Chrome";v="132"`, Mobile: "?0", Platform: `"Windows"`},
+	{ChUa: `"Chromium";v="133", "Not_A Brand";v="24", "Google Chrome";v="133"`, Mobile: "?0", Platform: `"Windows"`},
+	{ChUa: `"Chromium";v="134", "Not_A Brand";v="24", "Google Chrome";v="134"`, Mobile: "?0", Platform: `"Windows"`},
+	{ChUa: `"Not(A:Brand";v="8", "Chromium";v="144", "Microsoft Edge";v="144"`, Mobile: "?0", Platform: `"Windows"`},
+	{ChUa: `"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"`, Mobile: "?0", Platform: `"macOS"`},
+	{ChUa: `"Chromium";v="133", "Not_A Brand";v="24", "Google Chrome";v="133"`, Mobile: "?0", Platform: `"macOS"`},
+	{ChUa: `"Chromium";v="131", "Not_A Brand";v="24", "Google Chrome";v="131"`, Mobile: "?0", Platform: `"Linux"`},
+	{ChUa: `"Chromium";v="133", "Not_A Brand";v="24", "Google Chrome";v="133"`, Mobile: "?0", Platform: `"Linux"`},
+	{ChUa: "", Mobile: "", Platform: `"Windows"`},
+	{ChUa: "", Mobile: "", Platform: `"macOS"`},
+}
+
+func randomUserAgent() string {
+	return userAgents[rand.IntN(len(userAgents))]
+}
+
+func randomFingerprint() (chUa, mobile, platform string) {
+	v := secChUaVariants[rand.IntN(len(secChUaVariants))]
+	return v.ChUa, v.Mobile, v.Platform
+}
 
 type timedToken struct {
 	token     string
@@ -268,19 +323,45 @@ var httpClient = &http.Client{
 	},
 }
 
+/* acceptLanguages 常见的 Accept-Language 头 */
+var acceptLanguages = []string{
+	"zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+	"en-US,en;q=0.9",
+	"en-GB,en;q=0.9,en-US;q=0.8",
+	"zh-CN,zh;q=0.9,en;q=0.8",
+	"ja,en-US;q=0.9,en;q=0.8",
+	"ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+	"de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+	"fr-FR,fr;q=0.9,en-US;q=0.8,en;q=0.7",
+}
+
 func setCommonHeaders(req *http.Request) {
+	ip := randomIP()
+	ua := randomUserAgent()
+	chUa, mobile, platform := randomFingerprint()
+	lang := acceptLanguages[rand.IntN(len(acceptLanguages))]
+
 	req.Header.Set("Accept", "*/*")
-	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6")
+	req.Header.Set("Accept-Language", lang)
 	req.Header.Set("Cache-Control", "no-cache")
 	req.Header.Set("DNT", "1")
 	req.Header.Set("Pragma", "no-cache")
-	req.Header.Set("Sec-Ch-Ua", `"Not(A:Brand";v="8", "Chromium";v="144", "Microsoft Edge";v="144"`)
-	req.Header.Set("Sec-Ch-Ua-Mobile", "?0")
-	req.Header.Set("Sec-Ch-Ua-Platform", `"Windows"`)
+	if chUa != "" {
+		req.Header.Set("Sec-Ch-Ua", chUa)
+		req.Header.Set("Sec-Ch-Ua-Mobile", mobile)
+	}
+	req.Header.Set("Sec-Ch-Ua-Platform", platform)
 	req.Header.Set("Sec-Fetch-Dest", "empty")
 	req.Header.Set("Sec-Fetch-Mode", "cors")
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", ua)
+
+	/* 随机 IP 伪装头 */
+	req.Header.Set("X-Forwarded-For", ip)
+	req.Header.Set("X-Real-IP", ip)
+	req.Header.Set("CF-Connecting-IP", ip)
+	req.Header.Set("X-Originating-IP", ip)
+	req.Header.Set("True-Client-IP", ip)
 }
 
 func solveCaptcha(solverURL string) (string, error) {
@@ -935,16 +1016,12 @@ func pollImageResult(sessionToken, promptID, signature string) (string, error) {
 	return "", fmt.Errorf("轮询超时（5分钟），图像未生成完成")
 }
 
-/*
-downloadImageToBase64 从 URL 下载图片并转换为 base64 data URL
-支持 http/https 图片链接，返回格式为 data:image/xxx;base64,...
-*/
 func downloadImageToBase64(imageURL string) (string, error) {
 	req, err := http.NewRequest("GET", imageURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("创建下载请求失败: %w", err)
 	}
-	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("User-Agent", randomUserAgent())
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
