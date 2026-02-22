@@ -32,7 +32,7 @@ const (
 )
 
 const (
-	coffeeBaseURL     = "https://www.coffeecatai.com"
+	coffeeBaseURL     = "https://coffeecatai.openel.top"
 	coffeeGenURLFmt   = coffeeBaseURL + "/api/image/generation/%s"
 	coffeePollURL     = coffeeBaseURL + "/api/image/generation"
 	coffeePromptURL   = coffeeBaseURL + "/api/image/prompt/free"
@@ -308,24 +308,25 @@ func solveCaptcha(solverURL string) (string, error) {
 		return "", fmt.Errorf("任务ID为空, 响应: %s", string(body))
 	}
 
-	time.Sleep(5 * time.Second)
-	for i := 0; i < 60; i++ {
+	/* 初始等待 2 秒后以 500ms 间隔轮询，更快获取结果 */
+	time.Sleep(2 * time.Second)
+	for i := 0; i < 120; i++ {
 		resultURL := fmt.Sprintf("%s/result?id=%s", solverURL, taskResp.TaskID)
 		resp, err := httpClient.Get(resultURL)
 		if err != nil {
-			time.Sleep(1 * time.Second)
+			time.Sleep(500 * time.Millisecond)
 			continue
 		}
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
-			time.Sleep(1 * time.Second)
+			time.Sleep(500 * time.Millisecond)
 			continue
 		}
 
 		var result CaptchaResultResponse
 		if err := json.Unmarshal(body, &result); err != nil {
-			time.Sleep(1 * time.Second)
+			time.Sleep(500 * time.Millisecond)
 			continue
 		}
 		token := result.Solution.Token
@@ -335,7 +336,7 @@ func solveCaptcha(solverURL string) (string, error) {
 		if token == "CAPTCHA_FAIL" {
 			return "", fmt.Errorf("验证码解决失败")
 		}
-		time.Sleep(1 * time.Second)
+		time.Sleep(500 * time.Millisecond)
 	}
 	return "", fmt.Errorf("验证码获取超时")
 }
@@ -427,14 +428,15 @@ func (p *CaptchaPool) worker(solverURL string) {
 			return
 		default:
 		}
-		/* 池已满时等待，避免无意义的求解 */
+		/* 池已满时短暂等待，快速响应消费 */
 		if len(p.tokens) >= p.max {
-			time.Sleep(5 * time.Second)
+			time.Sleep(1 * time.Second)
 			continue
 		}
 		token, err := solveCaptcha(solverURL)
 		if err != nil {
 			slog.Warn("验证码求解失败", "err", err)
+			time.Sleep(1 * time.Second)
 			continue
 		}
 		select {
@@ -763,8 +765,14 @@ optimizePrompt 调用 CoffeeCat 提示词优化接口
 将用户输入的简短描述优化为详细的生图提示词
 */
 func optimizePrompt(sessionToken, prompt, modelType string) (string, error) {
+	/* CoffeeCat 要求最少 10 个字符，不足时用句号补齐（空格会被 API 拒绝） */
+	paddedPrompt := prompt
+	if len([]rune(paddedPrompt)) < 10 {
+		paddedPrompt = paddedPrompt + strings.Repeat(".", 10-len([]rune(paddedPrompt)))
+	}
+
 	reqBody := CoffeePromptRequest{
-		UserInput: prompt,
+		UserInput: paddedPrompt,
 		Sfw:       true,
 		ModelType: modelType,
 	}
@@ -803,6 +811,14 @@ func optimizePrompt(sessionToken, prompt, modelType string) (string, error) {
 	optimized := strings.TrimSpace(string(body))
 	if optimized == "" {
 		return prompt, nil
+	}
+
+	/* 尝试从 JSON 中提取 positive 字段（接口可能返回 {"positive":"..."}） */
+	var parsed struct {
+		Positive string `json:"positive"`
+	}
+	if err := json.Unmarshal([]byte(optimized), &parsed); err == nil && parsed.Positive != "" {
+		return parsed.Positive, nil
 	}
 
 	return optimized, nil
