@@ -1,0 +1,22 @@
+[project]
+name = "turnstile-solver"
+version = "1.2.0"
+description = "Turnstile 验证码解决服务"
+requires-python = ">=3.10"
+dependencies = [
+    "quart>=0.19.0",
+    "camoufox>=0.4.0",
+    "patchright>=1.40.0",
+    "rich>=13.7.0",
+]
+
+[project.scripts]
+turnstile-solver = "api_solver:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[dependency-groups]
+dev = []

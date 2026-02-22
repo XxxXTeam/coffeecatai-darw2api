@@ -1,0 +1,31 @@
+# 构建产物
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+dist/
+build/
+
+# 敏感配置（含 session_token 和 api_keys）
+config.json
+
+# 调试/临时文件
+1.txt
+*.log
+*.tmp
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# solver 运行时产物
+solver/.venv/
+solver/__pycache__/

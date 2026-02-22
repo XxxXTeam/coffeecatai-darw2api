@@ -1,0 +1,10 @@
+{
+  "port": 8080,
+  "api_keys": [],
+  "solver_url": "http://127.0.0.1:5072",
+  "solver_dir": "",
+  "workers": 2,
+  "browsers": 2,
+  "pool_min": 1,
+  "pool_max": 6
+}

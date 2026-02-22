@@ -1,0 +1,27 @@
+# 敏感配置
+config.json
+
+# 构建产物
+*.exe
+dist/
+build/
+
+# 调试/临时文件
+1.txt
+*.log
+
+# IDE
+.idea/
+.vscode/
+
+# Git
+.git/
+.gitignore
+
+# solver 运行时产物
+solver/.venv/
+solver/__pycache__/
+
+# 系统文件
+.DS_Store
+Thumbs.db
