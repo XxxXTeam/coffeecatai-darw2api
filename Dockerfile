@@ -14,7 +14,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
     ln -s /root/.local/bin/uv /usr/local/bin/uv
 WORKDIR /app
 COPY solver/* /app/solver/
-RUN cd /app/solver && uv sync
+RUN cd /app/solver && uv pip install --system --no-cache -r requirements.txt
 COPY --from=builder /out/coff /app/coff
 
 EXPOSE 8080
