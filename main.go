@@ -356,12 +356,9 @@ func setCommonHeaders(req *http.Request) {
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	req.Header.Set("User-Agent", ua)
 
-	/* 随机 IP 伪装头 */
+	/* 随机 IP 伪装头（不设置 CF-Connecting-IP / True-Client-IP，这些是 Cloudflare 内部头，客户端设置会触发 Error 1000） */
 	req.Header.Set("X-Forwarded-For", ip)
 	req.Header.Set("X-Real-IP", ip)
-	req.Header.Set("CF-Connecting-IP", ip)
-	req.Header.Set("X-Originating-IP", ip)
-	req.Header.Set("True-Client-IP", ip)
 }
 
 func solveCaptcha(solverURL string) (string, error) {
