@@ -33,15 +33,16 @@ const (
 )
 
 const (
-	coffeeBaseURL     = "https://www.coffeecatai.com"
-	coffeeGenURLFmt   = coffeeBaseURL + "/api/image/generation/%s"
-	coffeePollURL     = coffeeBaseURL + "/api/image/generation"
-	coffeePromptURL   = coffeeBaseURL + "/api/image/prompt/free"
-	coffeeUpscaleURL  = coffeeBaseURL + "/api/image/upscale"
-	coffeeDescribeURL = coffeeBaseURL + "/api/image/describe/free"
-	turnstileSiteKey  = "0x4AAAAAACJLXZu8e5k56IR-"
-	turnstileSiteURL  = "https://www.coffeecatai.com"
-	captchaTokenTTL   = 250 * time.Second
+	coffeeBaseURL          = "https://www.coffeecatai.com"
+	coffeeGenURLFmt        = coffeeBaseURL + "/api/image/generation/%s"
+	coffeePollURL          = coffeeBaseURL + "/api/image/generation"
+	coffeePromptURL        = coffeeBaseURL + "/api/image/prompt/free"
+	coffeeUpscaleURL       = coffeeBaseURL + "/api/image/upscale"
+	coffeeSeedvrUpscaleURL = coffeeBaseURL + "/api/image/upscale/seedvr"
+	coffeeDescribeURL      = coffeeBaseURL + "/api/image/describe/free"
+	turnstileSiteKey       = "0x4AAAAAACJLXZu8e5k56IR-"
+	turnstileSiteURL       = "https://www.coffeecatai.com"
+	captchaTokenTTL        = 250 * time.Second
 )
 
 func randomIP() string {
@@ -109,7 +110,15 @@ type ImageSize struct {
 	Ratio  string
 }
 
-var sizeMap = map[string]ImageSize{
+var zimageSizeMap = map[string]ImageSize{
+	"1:1":  {Width: 1024, Height: 1024, Ratio: "1:1"},
+	"3:4":  {Width: 768, Height: 1024, Ratio: "3:4"},
+	"4:3":  {Width: 1024, Height: 768, Ratio: "4:3"},
+	"9:16": {Width: 720, Height: 1280, Ratio: "9:16"},
+	"16:9": {Width: 1280, Height: 720, Ratio: "16:9"},
+}
+
+var bananaSizeMap = map[string]ImageSize{
 	"1:1":  {Width: 1024, Height: 1024, Ratio: "1:1"},
 	"2:3":  {Width: 832, Height: 1248, Ratio: "2:3"},
 	"3:2":  {Width: 1248, Height: 832, Ratio: "3:2"},
@@ -122,7 +131,36 @@ var sizeMap = map[string]ImageSize{
 	"21:9": {Width: 1536, Height: 672, Ratio: "21:9"},
 }
 
-var defaultSize = sizeMap["3:2"]
+var allRatios = func() map[string]bool {
+	m := make(map[string]bool)
+	for k := range zimageSizeMap {
+		m[k] = true
+	}
+	for k := range bananaSizeMap {
+		m[k] = true
+	}
+	return m
+}()
+
+/*
+isBananaModel 判断模型类型是否属于 banana 系列
+banana 系列使用 10 种分辨率，其余模型使用 5 种分辨率
+*/
+func isBananaModel(modelType string) bool {
+	return modelType == "banana" || modelType == "banana-pro" || modelType == "banana-2"
+}
+
+/*
+getSizeConfig 根据模型类型获取对应的分辨率配置和默认尺寸
+@return sizeMap 该模型支持的分辨率映射
+@return defaultSize 该模型的默认尺寸
+*/
+func getSizeConfig(modelType string) (map[string]ImageSize, ImageSize) {
+	if isBananaModel(modelType) {
+		return bananaSizeMap, bananaSizeMap["3:2"]
+	}
+	return zimageSizeMap, zimageSizeMap["4:3"]
+}
 
 /* upscaleModelMap 超分模型别名 → CoffeeCat checkpoint 名称 */
 var upscaleModelMap = map[string]string{
@@ -135,12 +173,10 @@ var upscaleModelMap = map[string]string{
 var defaultUpscaleModel = "4x-UltraSharpV2.safetensors"
 
 /*
-parseUpscaleModel 从模型名中解析超分 checkpoint
-支持格式：
-  - "banana-upscale"            → 默认 UltraSharp V2
-  - "banana-upscale-realesrgan" → RealESRGAN_x4plus.pth
-  - "banana-upscale-animesharp" → AnimeSharp V4
-  - "banana-upscale-seedvr"     → SeedVR2
+- "zimage-turbo-upscale"            → 默认 UltraSharp V2
+- "zimage-turbo-upscale-realesrgan" → RealESRGAN_x4plus.pth
+- "zimage-turbo-upscale-animesharp" → AnimeSharp V4
+- "zimage-turbo-upscale-seedvr"     → SeedVR2
 */
 func parseUpscaleModel(model string) string {
 	for alias, ckpt := range upscaleModelMap {
@@ -153,7 +189,7 @@ func parseUpscaleModel(model string) string {
 
 /*
 OpenAIImageRequest OpenAI 图像生成请求体
-- Model: 模型名称，支持后缀指定尺寸，如 banana-16:9
+- Model: 模型名称，支持后缀指定尺寸，如 zimage-turbo-16:9
 - Prompt: 图像描述提示词
 - N: 生成图片数量，默认为 1
 - Size: 图像尺寸（可选，优先使用模型名后缀）
@@ -243,6 +279,32 @@ type CoffeeUpscaleRequest struct {
 type CoffeeUpscaleResponse struct {
 	PromptID  string `json:"prompt_id"`
 	Signature string `json:"signature"`
+}
+
+/*
+CoffeeKissingRequest kissing/hugging 生图请求体
+@field ActionDescription 动作描述（用户 prompt）
+@field UseDynamicDetails 是否启用动态细节
+@field IsDual 是否双人模式（上传两张不同人物的图片）
+@field HasScene 是否包含场景描述
+@field ModelType 底层模型类型
+@field Sfw 是否安全模式
+@field Width 图片宽度
+@field Height 图片高度
+@field Base64Imgs 输入图片列表
+@field InteractionType 交互类型: kiss / hug
+*/
+type CoffeeKissingRequest struct {
+	ActionDescription string   `json:"actionDescription"`
+	UseDynamicDetails bool     `json:"useDynamicDetails"`
+	IsDual            bool     `json:"isDual"`
+	HasScene          bool     `json:"hasScene"`
+	ModelType         string   `json:"modelType"`
+	Sfw               bool     `json:"sfw"`
+	Width             int      `json:"width"`
+	Height            int      `json:"height"`
+	Base64Imgs        []string `json:"base64_imgs,omitempty"`
+	InteractionType   string   `json:"interactionType"`
 }
 
 /* CoffeeDescribeRequest 图片描述请求体 */
@@ -794,56 +856,50 @@ func ensureSolver(solverURL string, browsers int, solverDirOverride string) (cle
 	return cleanup, browsers, nil
 }
 
-/* ==================== 模型名称解析 ==================== */
-
 /*
-parseModel 从模型名称中解析出模型类型和图像尺寸
-支持格式：
-  - "banana"       → modelType=banana, size=默认(3:2)
-  - "banana-16:9"  → modelType=banana, size=16:9(1344x768)
-  - "banana-1:1"   → modelType=banana, size=1:1(1024x1024)
+- "zimage-turbo"        → modelType=zimage-turbo, size=默认(4:3, 1024x768)
+- "zimage-turbo-16:9"   → modelType=zimage-turbo, size=16:9(1280x720)
+- "banana-3:2"          → modelType=banana, size=3:2(1248x832)
+- "banana-2-1:1"        → modelType=banana-2, size=1:1(1024x1024)
+- "flux2klein-9:16"     → modelType=flux2klein, size=9:16(720x1280)
 */
 func parseModel(model string) (modelType string, size ImageSize) {
-	modelType = "banana"
-	size = defaultSize
+	modelType = "zimage-turbo"
+	_, size = getSizeConfig(modelType)
 
 	if model == "" {
 		return
 	}
 
 	/* 检查模型名是否以已知的比例后缀结尾 */
-	for ratio, s := range sizeMap {
+	for ratio := range allRatios {
 		suffix := "-" + ratio
 		if strings.HasSuffix(model, suffix) {
 			modelType = strings.TrimSuffix(model, suffix)
 			if modelType == "" {
-				modelType = "banana"
+				modelType = "zimage-turbo"
 			}
-			size = s
+			sMap, defSize := getSizeConfig(modelType)
+			if s, ok := sMap[ratio]; ok {
+				size = s
+			} else {
+				size = defSize
+			}
 			return
 		}
 	}
-
-	/* 无已知后缀，整个字符串作为模型类型 */
 	modelType = model
+	_, size = getSizeConfig(modelType)
 	return
 }
 
-/* ==================== CoffeeCat API 客户端 ==================== */
-
-/* CoffeePromptRequest CoffeeCat 提示词优化请求体 */
 type CoffeePromptRequest struct {
 	UserInput string `json:"userInput"`
 	Sfw       bool   `json:"sfw"`
 	ModelType string `json:"modelType"`
 }
 
-/*
-optimizePrompt 调用 CoffeeCat 提示词优化接口
-将用户输入的简短描述优化为详细的生图提示词
-*/
 func optimizePrompt(sessionToken, prompt, modelType string) (string, error) {
-	/* CoffeeCat 要求最少 10 个字符，不足时用句号补齐（空格会被 API 拒绝） */
 	paddedPrompt := prompt
 	if len([]rune(paddedPrompt)) < 10 {
 		paddedPrompt = paddedPrompt + strings.Repeat(".", 10-len([]rune(paddedPrompt)))
@@ -1101,7 +1157,13 @@ func upscaleImage(sessionToken, captchaToken, base64Img, model string) (*CoffeeU
 		return nil, fmt.Errorf("序列化请求失败: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", coffeeUpscaleURL, bytes.NewReader(bodyData))
+	/* SeedVR2 使用独立的 API 路径 */
+	upscaleURL := coffeeUpscaleURL
+	if model == "seedvr" {
+		upscaleURL = coffeeSeedvrUpscaleURL
+	}
+
+	req, err := http.NewRequest("POST", upscaleURL, bytes.NewReader(bodyData))
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
@@ -1134,6 +1196,70 @@ func upscaleImage(sessionToken, captchaToken, base64Img, model string) (*CoffeeU
 	}
 
 	return &upResp, nil
+}
+
+/*
+generateKissing 调用 CoffeeCat kissing/hugging 生图接口
+@param actionDesc 动作描述（用户 prompt）
+@param interactionType 交互类型: kiss / hug
+@param base64Imgs 输入图片列表（1-2 张）
+@return 与普通生图相同的响应（包含 prompt_id 和 signature）
+*/
+func generateKissing(sessionToken, captchaToken, actionDesc, interactionType string, width, height int, base64Imgs []string) (*CoffeeGenerationResponse, error) {
+	isDual := len(base64Imgs) >= 2
+
+	reqBody := CoffeeKissingRequest{
+		ActionDescription: actionDesc,
+		UseDynamicDetails: true,
+		IsDual:            isDual,
+		HasScene:          true,
+		ModelType:         "flux2klein-9b-sfw",
+		Sfw:               true,
+		Width:             width,
+		Height:            height,
+		Base64Imgs:        base64Imgs,
+		InteractionType:   interactionType,
+	}
+
+	bodyData, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("序列化请求失败: %w", err)
+	}
+
+	genURL := fmt.Sprintf(coffeeGenURLFmt, "kissing")
+	req, err := http.NewRequest("POST", genURL, bytes.NewReader(bodyData))
+	if err != nil {
+		return nil, fmt.Errorf("创建请求失败: %w", err)
+	}
+
+	setCommonHeaders(req)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", coffeeBaseURL)
+	req.Header.Set("Referer", coffeeBaseURL+"/ai-kissing-generator")
+	req.Header.Set("Cf-Turnstile-Token", captchaToken)
+	req.Header.Set("Cookie", "__Secure-next-auth.session-token="+sessionToken)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("读取响应失败: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("kissing 生成失败, 状态码: %d, 响应: %s", resp.StatusCode, string(body))
+	}
+
+	var genResp CoffeeGenerationResponse
+	if err := json.Unmarshal(body, &genResp); err != nil {
+		return nil, fmt.Errorf("解析响应失败: %w, body: %s", err, string(body))
+	}
+
+	return &genResp, nil
 }
 
 /*
@@ -1573,13 +1699,15 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	isOptimize := strings.Contains(req.Model, "optimize")
 	isDescribe := strings.Contains(req.Model, "describe")
 	isUpscale := strings.Contains(req.Model, "upscale")
+	isKissing := strings.HasPrefix(req.Model, "kissing")
+	isHugging := strings.HasPrefix(req.Model, "hugging")
 
 	if isDescribe {
 		/* ====== 图片描述模式（输入图片，输出提示词） ====== */
 		slog.Info("收到图片描述请求", "model", req.Model, "images", len(base64Imgs))
 
 		if len(base64Imgs) == 0 {
-			s.sendError(w, http.StatusBadRequest, "banana-describe 需要提供图片", "invalid_request_error", "missing_image")
+			s.sendError(w, http.StatusBadRequest, "zimage-turbo-describe 需要提供图片", "invalid_request_error", "missing_image")
 			return
 		}
 
@@ -1606,7 +1734,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		slog.Info("收到超分请求", "model", req.Model, "images", len(base64Imgs))
 
 		if len(base64Imgs) == 0 {
-			s.sendError(w, http.StatusBadRequest, "banana-upscale 需要提供图片", "invalid_request_error", "missing_image")
+			s.sendError(w, http.StatusBadRequest, "zimage-turbo-upscale 需要提供图片", "invalid_request_error", "missing_image")
 			return
 		}
 
@@ -1656,7 +1784,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		/* ====== 提示词优化模式 ====== */
 		slog.Info("收到提示词优化请求", "model", req.Model, "prompt", userPrompt)
 
-		optimized, err := optimizePrompt(sessionToken, userPrompt, "banana")
+		optimized, err := optimizePrompt(sessionToken, userPrompt, "zimage-turbo")
 		if err != nil {
 			slog.Error("提示词优化失败", "err", err)
 			s.sendError(w, http.StatusInternalServerError, "提示词优化失败: "+err.Error(), "server_error", "optimize_failed")
@@ -1665,6 +1793,64 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 		slog.Info("提示词优化完成", "optimized", optimized)
 		s.sendChatResponse(w, req.Model, optimized)
+	} else if isKissing || isHugging {
+		interactionType := "kiss"
+		if isHugging {
+			interactionType = "hug"
+		}
+		slog.Info("收到 kissing/hugging 请求", "model", req.Model, "type", interactionType, "images", len(base64Imgs))
+
+		if len(base64Imgs) == 0 {
+			s.sendError(w, http.StatusBadRequest, "kissing/hugging 需要提供图片（1-2 张）", "invalid_request_error", "missing_image")
+			return
+		}
+
+		_, size := parseModel(req.Model)
+
+		ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+		captchaToken, err := s.pool.get(ctx)
+		cancel()
+		if err != nil {
+			s.sendError(w, http.StatusInternalServerError, "获取验证码超时: "+err.Error(), "server_error", "captcha_timeout")
+			return
+		}
+
+		slog.Info("验证码已获取，正在提交 kissing 任务")
+
+		genResp, err := generateKissing(sessionToken, captchaToken, userPrompt, interactionType, size.Width, size.Height, base64Imgs)
+		if err != nil {
+			slog.Error("kissing 生成请求失败", "err", err)
+			s.sendError(w, http.StatusInternalServerError, "kissing 生成失败: "+err.Error(), "server_error", "kissing_failed")
+			return
+		}
+
+		promptID := genResp.Metadata.QueryParams.PromptID
+		signature := genResp.Metadata.QueryParams.Signature
+
+		if promptID == "" {
+			s.sendError(w, http.StatusInternalServerError, "未获取到任务ID", "server_error", "missing_prompt_id")
+			return
+		}
+
+		slog.Info("kissing 任务已提交，开始轮询结果", "promptID", promptID)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+
+		imageURL, err := pollImageResult(sessionToken, promptID, signature)
+		if err != nil {
+			slog.Error("轮询结果失败", "err", err)
+			s.sendChatResponseBody(w, req.Model, "kissing 生成失败: "+err.Error())
+			return
+		}
+
+		slog.Info("kissing 生成完成", "url", imageURL)
+		content := fmt.Sprintf("![image](%s)", imageURL)
+		s.sendChatResponseBody(w, req.Model, content)
+
 	} else {
 		/* ====== 生图模式（通过 chat 接口） ====== */
 		modelType, size := parseModel(req.Model)
@@ -1777,34 +1963,65 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().Unix()
 	var models []OpenAIModel
 
-	/* 文生图模型：banana + 尺寸后缀 */
-	models = append(models, OpenAIModel{
-		ID: "banana", Object: "model", Created: now, OwnedBy: "coffeecatai",
-	})
-	for ratio := range sizeMap {
+	/*
+	 * 生图模型列表
+	 * zimage 系列使用 zimageSizeMap（5 种分辨率）
+	 * banana 系列使用 bananaSizeMap（10 种分辨率）
+	 */
+	type modelDef struct {
+		name    string
+		sizeMap map[string]ImageSize
+	}
+	genModels := []modelDef{
+		{"zimage-turbo", zimageSizeMap},
+		{"zimage-turbo-nsfw", zimageSizeMap},
+		{"zimage-base-vip", zimageSizeMap},
+		{"flux2klein", zimageSizeMap},
+		{"banana", bananaSizeMap},
+		{"banana-pro", bananaSizeMap},
+		{"banana-2", bananaSizeMap},
+	}
+	for _, md := range genModels {
 		models = append(models, OpenAIModel{
-			ID: "banana-" + ratio, Object: "model", Created: now, OwnedBy: "coffeecatai",
+			ID: md.name, Object: "model", Created: now, OwnedBy: "coffeecatai",
 		})
+		for ratio := range md.sizeMap {
+			models = append(models, OpenAIModel{
+				ID: md.name + "-" + ratio, Object: "model", Created: now, OwnedBy: "coffeecatai",
+			})
+		}
 	}
 
 	/* 提示词优化模型（走 chat completions 接口） */
 	models = append(models, OpenAIModel{
-		ID: "banana-optimize", Object: "model", Created: now, OwnedBy: "coffeecatai",
+		ID: "zimage-turbo-optimize", Object: "model", Created: now, OwnedBy: "coffeecatai",
 	})
 
 	/* 图片描述模型（输入图片，输出提示词） */
 	models = append(models, OpenAIModel{
-		ID: "banana-describe", Object: "model", Created: now, OwnedBy: "coffeecatai",
+		ID: "zimage-turbo-describe", Object: "model", Created: now, OwnedBy: "coffeecatai",
 	})
 
 	/* 超分模型（默认 + 各子模型） */
 	models = append(models, OpenAIModel{
-		ID: "banana-upscale", Object: "model", Created: now, OwnedBy: "coffeecatai",
+		ID: "zimage-turbo-upscale", Object: "model", Created: now, OwnedBy: "coffeecatai",
 	})
 	for alias := range upscaleModelMap {
 		models = append(models, OpenAIModel{
-			ID: "banana-upscale-" + alias, Object: "model", Created: now, OwnedBy: "coffeecatai",
+			ID: "zimage-turbo-upscale-" + alias, Object: "model", Created: now, OwnedBy: "coffeecatai",
 		})
+	}
+
+	/* Kissing/Hugging 模型（图生图，需要上传人物照片） */
+	for _, name := range []string{"kissing", "hugging"} {
+		models = append(models, OpenAIModel{
+			ID: name, Object: "model", Created: now, OwnedBy: "coffeecatai",
+		})
+		for ratio := range zimageSizeMap {
+			models = append(models, OpenAIModel{
+				ID: name + "-" + ratio, Object: "model", Created: now, OwnedBy: "coffeecatai",
+			})
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1927,7 +2144,7 @@ func main() {
 	}
 	slog.Info("  [图像生成] POST /v1/images/generations & /v1/chat/completions")
 	slog.Info("  [提示词优化] POST /v1/chat/completions")
-	slog.Info("  banana-optimize → 输入提示词, 输出优化后的提示词")
+	slog.Info("  zimage-turbo-optimize → 输入提示词, 输出优化后的提示词")
 
 	if err := http.ListenAndServe(":"+portStr, corsMiddleware(mux)); err != nil {
 		slog.Error("服务启动失败", "err", err)
